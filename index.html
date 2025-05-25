@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>域名管理系统</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link href="https://unpkg.com/element-plus/dist/index.css" rel="stylesheet">
+  <style>
+    body { background: #f9fafb; font-family: 'Segoe UI',sans-serif; }
+    #app { max-width:600px;margin:2em auto;padding:2em;background:#fff;border-radius:10px;box-shadow:0 2px 20px #0001; }
+    .nav { margin-bottom:1em; }
+    .nav button { margin-right:8px; }
+    table{width:100%;border-collapse:collapse;}
+    th,td{padding:6px;border-bottom:1px solid #eee;}
+  </style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://unpkg.com/vue@3"></script>
+<script src="https://unpkg.com/element-plus"></script>
+<script>
+const {createApp, ref, onMounted} = Vue;
+createApp({
+  setup() {
+    const view = ref('login');
+    const user = ref(null);
+    const domains = ref([]);
+    // 登录
+    const loginForm = ref({username:'',password:''});
+    async function login() {
+      const res = await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(loginForm.value)});
+      const data = await res.json();
+      if(data.ok){user.value=data.username;view.value='domains';loadDomains();}
+      else ElMessage.error(data.msg||'登录失败');
+    }
+    // 获取域名
+    async function loadDomains() {
+      const res = await fetch('/api/domains');
+      const data = await res.json();
+      domains.value = data.data || [];
+    }
+    // 添加域名
+    const newDomain = ref({domain:'',registrar:'',expiry_date:'',memo:''});
+    async function addDomain() {
+      if(!newDomain.value.domain||!newDomain.value.expiry_date)return ElMessage.error("必填");
+      await fetch('/api/domains',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(newDomain.value)});
+      newDomain.value={domain:'',registrar:'',expiry_date:'',memo:''};
+      loadDomains();
+    }
+    async function delDomain(id) {
+      await fetch('/api/domains/'+id,{method:'DELETE'});
+      loadDomains();
+    }
+    async function logout() {
+      await fetch('/api/logout');
+      user.value=null;
+      view.value='login';
+    }
+    return {view, user, loginForm, login, domains, loadDomains, newDomain, addDomain, delDomain, logout};
+  },
+  template: `
+    <div v-if="!user">
+      <h2>域名管理系统</h2>
+      <el-form @submit.prevent="login">
+        <el-form-item><el-input v-model="loginForm.username" placeholder="用户名"></el-input></el-form-item>
+        <el-form-item><el-input v-model="loginForm.password" type="password" placeholder="密码"></el-input></el-form-item>
+        <el-form-item><el-button type="primary" @click="login">登录</el-button></el-form-item>
+      </el-form>
+    </div>
+    <div v-else>
+      <div class="nav">
+        <b>欢迎，{{user}}</b> <button @click="logout">退出</button>
+      </div>
+      <h3>域名列表</h3>
+      <el-table :data="domains" style="width:100%">
+        <el-table-column prop="domain" label="域名" />
+        <el-table-column prop="registrar" label="注册商" />
+        <el-table-column prop="expiry_date" label="到期日" />
+        <el-table-column prop="memo" label="备注" />
+        <el-table-column label="操作" width="80">
+          <template #default="scope">
+            <el-button type="danger" size="small" @click="delDomain(scope.row.id)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <h4>添加新域名</h4>
+      <el-form inline>
+        <el-form-item><el-input v-model="newDomain.domain" placeholder="域名"></el-input></el-form-item>
+        <el-form-item><el-input v-model="newDomain.registrar" placeholder="注册商"></el-input></el-form-item>
+        <el-form-item><el-date-picker v-model="newDomain.expiry_date" placeholder="到期日" type="date"></el-date-picker></el-form-item>
+        <el-form-item><el-input v-model="newDomain.memo" placeholder="备注"></el-input></el-form-item>
+        <el-form-item><el-button type="primary" @click="addDomain">添加</el-button></el-form-item>
+      </el-form>
+    </div>
+  `
+}).use(ElementPlus).mount("#app");
+</script>
+</body>
+</html>
