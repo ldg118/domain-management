@@ -22,11 +22,10 @@
 const { createApp, ref, reactive } = Vue;
 createApp({
   setup() {
-    const view = ref('login');
+    const view = ref('domains');
     const user = ref(null);
     const users = ref([]);
     const domains = ref([]);
-    const registrars = ref([]);
     const sslCerts = ref([]);
     const selectedDomain = ref(null);
     const isAdmin = ref(false);
@@ -45,7 +44,6 @@ createApp({
         isAdmin.value = data.role === 'admin';
         view.value = 'domains';
         await loadDomains();
-        await loadRegistrars();
         if(isAdmin.value) await loadUsers();
       } else {
         window.ElMessage.error(data.msg||'登录失败');
@@ -57,6 +55,27 @@ createApp({
       const res = await fetch('/api/users');
       const data = await res.json();
       users.value = data.data || [];
+      users.value.forEach(u => {
+        u.editing = false;
+        u.editName = u.username;
+        u.editPwd = '';
+      });
+    }
+    async function saveUser(u) {
+      if(!u.editName) return window.ElMessage.error("用户名不能为空");
+      const res = await fetch('/api/users/'+u.id, {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({username: u.editName, password: u.editPwd})
+      });
+      const data = await res.json();
+      if(data.ok) {
+        u.username = u.editName;
+        u.editing = false;
+        window.ElMessage.success("保存成功");
+      } else {
+        window.ElMessage.error(data.msg||"保存失败");
+      }
     }
 
     // 域名管理
@@ -79,7 +98,7 @@ createApp({
       }
     }
     // 添加域名
-    const newDomain = reactive({domain:'',registrar_id:'',expiry_date:'',memo:'',remind_days:7});
+    const newDomain = reactive({domain:'',expiry_date:'',memo:'',remind_days:7});
     async function addDomain() {
       if(!newDomain.domain||!newDomain.expiry_date) return window.ElMessage.error("必填");
       await fetch('/api/domains',{
@@ -87,34 +106,12 @@ createApp({
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify(newDomain)
       });
-      Object.assign(newDomain, {domain:'',registrar_id:'',expiry_date:'',memo:'',remind_days:7});
+      Object.assign(newDomain, {domain:'',expiry_date:'',memo:'',remind_days:7});
       await loadDomains();
     }
     async function delDomain(id) {
       await fetch('/api/domains/'+id,{method:'DELETE'});
       await loadDomains();
-    }
-
-    // 注册商管理
-    async function loadRegistrars() {
-      const res = await fetch('/api/registrars');
-      const data = await res.json();
-      registrars.value = data.data || [];
-    }
-    const newRegistrar = reactive({name:'',contact:'',website:'',api_url:'',api_key:'',support_email:'',memo:''});
-    async function addRegistrar() {
-      if(!newRegistrar.name) return window.ElMessage.error("注册商名称必填");
-      await fetch('/api/registrars',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(newRegistrar)
-      });
-      Object.assign(newRegistrar, {name:'',contact:'',website:'',api_url:'',api_key:'',support_email:'',memo:''});
-      await loadRegistrars();
-    }
-    async function delRegistrar(id) {
-      await fetch('/api/registrars/'+id,{method:'DELETE'});
-      await loadRegistrars();
     }
 
     // SSL证书管理
@@ -125,47 +122,38 @@ createApp({
       selectedDomain.value = domain_id;
     }
     const newCert = reactive({cert:'',key:'',expiry_date:'',memo:''});
+    const showCertDialog = ref(false);
+    function openCertDialog() {
+      Object.assign(newCert, {cert:'',key:'',expiry_date:'',memo:''});
+      showCertDialog.value = true;
+    }
     async function addCert() {
       if(!selectedDomain.value) return;
+      if(!newCert.cert || !newCert.key || !newCert.expiry_date) return window.ElMessage.error("证书、私钥、到期日必填");
       await fetch('/api/ssl',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({...newCert, domain_id:selectedDomain.value})
       });
-      Object.assign(newCert, {cert:'',key:'',expiry_date:'',memo:''});
+      showCertDialog.value = false;
       await loadSSLCerts(selectedDomain.value);
     }
     async function delCert(id) {
       await fetch('/api/ssl/'+id,{method:'DELETE'});
       await loadSSLCerts(selectedDomain.value);
     }
-    // SSL自动申请（ACME对接预留）
-    async function applyCert(domain_id) {
-      const res = await fetch('/api/ssl/apply',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({domain_id})
-      });
-      const data = await res.json();
-      if(data.ok) {
-        window.ElMessage.success('证书申请成功');
-        await loadSSLCerts(domain_id);
-      } else {
-        window.ElMessage.error(data.msg||'证书申请失败');
-      }
-    }
 
     async function logout() {
       await fetch('/api/logout');
       user.value=null;
-      view.value='login';
+      view.value='domains';
     }
 
     return {
       view, user, isAdmin, users, loginForm, login, logout,
       domains, loadDomains, newDomain, addDomain, delDomain,
-      registrars, loadRegistrars, newRegistrar, addRegistrar, delRegistrar,
-      sslCerts, loadSSLCerts, newCert, addCert, delCert, selectedDomain, applyCert
+      sslCerts, loadSSLCerts, newCert, addCert, delCert, selectedDomain,
+      showCertDialog, openCertDialog, saveUser
     };
   },
   template: `
@@ -189,18 +177,13 @@ createApp({
           <el-table :data="domains" style="width:100%">
             <el-table-column prop="domain" label="域名" />
             <el-table-column prop="status" label="状态" />
-            <el-table-column prop="registrar_id" label="注册商">
-              <template #default="scope">
-                {{ registrars.find(r=>r.id===scope.row.registrar_id)?.name || '未知' }}
-              </template>
-            </el-table-column>
             <el-table-column prop="expiry_date" label="到期日" />
             <el-table-column prop="remind_days" label="提醒(天)" />
             <el-table-column prop="memo" label="备注" />
             <el-table-column label="SSL证书" width="120">
               <template #default="scope">
                 <el-button size="small" @click="loadSSLCerts(scope.row.id)">管理</el-button>
-                <el-button size="small" @click="applyCert(scope.row.id)">自动申请</el-button>
+                <el-button size="small" @click="selectedDomain=scope.row.id;openCertDialog()">手动申请</el-button>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="80">
@@ -212,42 +195,10 @@ createApp({
           <h4>添加新域名</h4>
           <el-form inline @submit.prevent="addDomain">
             <el-form-item><el-input v-model="newDomain.domain" placeholder="域名"></el-input></el-form-item>
-            <el-form-item>
-              <el-select v-model="newDomain.registrar_id" placeholder="注册商" style="width:120px">
-                <el-option v-for="r in registrars" :key="r.id" :label="r.name" :value="r.id"></el-option>
-              </el-select>
-            </el-form-item>
             <el-form-item><el-date-picker v-model="newDomain.expiry_date" placeholder="到期日" type="date"></el-date-picker></el-form-item>
             <el-form-item><el-input v-model="newDomain.remind_days" placeholder="提醒天数" style="width:80px"></el-input></el-form-item>
             <el-form-item><el-input v-model="newDomain.memo" placeholder="备注"></el-input></el-form-item>
             <el-form-item><el-button type="primary" @click="addDomain">添加</el-button></el-form-item>
-          </el-form>
-        </el-tab-pane>
-        <el-tab-pane label="注册商管理" name="registrars">
-          <h3>注册商列表</h3>
-          <el-table :data="registrars" style="width:100%">
-            <el-table-column prop="name" label="名称" />
-            <el-table-column prop="contact" label="联系人" />
-            <el-table-column prop="website" label="官网" />
-            <el-table-column prop="api_url" label="API地址" />
-            <el-table-column prop="support_email" label="支持邮箱" />
-            <el-table-column prop="memo" label="备注" />
-            <el-table-column label="操作" width="80">
-              <template #default="scope">
-                <el-button type="danger" size="small" @click="delRegistrar(scope.row.id)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <h4>添加注册商</h4>
-          <el-form inline @submit.prevent="addRegistrar">
-            <el-form-item><el-input v-model="newRegistrar.name" placeholder="名称"></el-input></el-form-item>
-            <el-form-item><el-input v-model="newRegistrar.contact" placeholder="联系人"></el-input></el-form-item>
-            <el-form-item><el-input v-model="newRegistrar.website" placeholder="官网"></el-input></el-form-item>
-            <el-form-item><el-input v-model="newRegistrar.api_url" placeholder="API地址"></el-input></el-form-item>
-            <el-form-item><el-input v-model="newRegistrar.api_key" placeholder="API密钥"></el-input></el-form-item>
-            <el-form-item><el-input v-model="newRegistrar.support_email" placeholder="支持邮箱"></el-input></el-form-item>
-            <el-form-item><el-input v-model="newRegistrar.memo" placeholder="备注"></el-input></el-form-item>
-            <el-form-item><el-button type="primary" @click="addRegistrar">添加</el-button></el-form-item>
           </el-form>
         </el-tab-pane>
         <el-tab-pane label="SSL证书管理" name="ssl" v-if="selectedDomain">
@@ -262,23 +213,54 @@ createApp({
               </template>
             </el-table-column>
           </el-table>
-          <h4>添加/导入证书</h4>
-          <el-form inline @submit.prevent="addCert">
-            <el-form-item><el-input v-model="newCert.cert" placeholder="证书内容"></el-input></el-form-item>
-            <el-form-item><el-input v-model="newCert.key" placeholder="私钥"></el-input></el-form-item>
-            <el-form-item><el-date-picker v-model="newCert.expiry_date" placeholder="到期日" type="date"></el-date-picker></el-form-item>
-            <el-form-item><el-input v-model="newCert.memo" placeholder="备注"></el-input></el-form-item>
-            <el-form-item><el-button type="primary" @click="addCert">添加</el-button></el-form-item>
-          </el-form>
         </el-tab-pane>
         <el-tab-pane label="用户管理" name="users" v-if="isAdmin">
           <h3>用户列表</h3>
           <el-table :data="users" style="width:100%">
-            <el-table-column prop="username" label="用户名" />
+            <el-table-column prop="username" label="用户名">
+              <template #default="scope">
+                <span v-if="!scope.row.editing">{{scope.row.username}}</span>
+                <el-input v-else v-model="scope.row.editName" size="small" style="width:120px"></el-input>
+              </template>
+            </el-table-column>
             <el-table-column prop="role" label="角色" />
+            <el-table-column label="新密码">
+              <template #default="scope">
+                <el-input v-if="scope.row.editing" v-model="scope.row.editPwd" size="small" style="width:120px" placeholder="不修改留空"></el-input>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="120">
+              <template #default="scope">
+                <el-button v-if="!scope.row.editing" size="small" @click="scope.row.editing=true">编辑</el-button>
+                <span v-else>
+                  <el-button size="small" type="primary" @click="saveUser(scope.row)">保存</el-button>
+                  <el-button size="small" @click="scope.row.editing=false">取消</el-button>
+                </span>
+              </template>
+            </el-table-column>
           </el-table>
         </el-tab-pane>
       </el-tabs>
+      <el-dialog v-model="showCertDialog" title="手动申请/导入SSL证书" width="500px">
+        <el-form label-width="80px">
+          <el-form-item label="证书">
+            <el-input v-model="newCert.cert" type="textarea" rows="3" placeholder="PEM格式证书"></el-input>
+          </el-form-item>
+          <el-form-item label="私钥">
+            <el-input v-model="newCert.key" type="textarea" rows="3" placeholder="PEM格式私钥"></el-input>
+          </el-form-item>
+          <el-form-item label="到期日">
+            <el-date-picker v-model="newCert.expiry_date" placeholder="到期日" type="date"></el-date-picker>
+          </el-form-item>
+          <el-form-item label="备注">
+            <el-input v-model="newCert.memo" placeholder="备注"></el-input>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showCertDialog=false">取消</el-button>
+          <el-button type="primary" @click="addCert">保存</el-button>
+        </template>
+      </el-dialog>
     </div>
   `
 }).use(ElementPlus).mount("#app");
