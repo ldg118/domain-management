@@ -73,8 +73,8 @@ export default {
     // 添加域名
     if (pathname === '/api/domains' && req.method === 'POST') {
       const d = await req.json();
-      await env.DB.prepare('INSERT INTO domains(domain,expiry_date,memo,user_id,remind_days) VALUES (?,?,?,?,?)')
-        .bind(d.domain, d.expiry_date, d.memo || '', user.id, d.remind_days || 7).run();
+      await env.DB.prepare('INSERT INTO domains(domain,registrar_id,expiry_date,memo,user_id,remind_days) VALUES (?,?,?,?,?,?)')
+        .bind(d.domain, d.registrar_id || null, d.expiry_date, d.memo || '', user.id, d.remind_days || 7).run();
       return new Response(JSON.stringify({ ok: true }), { headers });
     }
 
@@ -85,6 +85,25 @@ export default {
       if (!domain) return new Response(JSON.stringify({ ok: false, msg: '域名不存在' }), { headers, status: 404 });
       if (!isAdmin(user) && domain.user_id !== user.id) return new Response(JSON.stringify({ ok: false, msg: '无权限' }), { headers, status: 403 });
       await env.DB.prepare('DELETE FROM domains WHERE id=?').bind(id).run();
+      return new Response(JSON.stringify({ ok: true }), { headers });
+    }
+
+    // 注册商列表
+    if (pathname === '/api/registrars' && req.method === 'GET') {
+      const rows = await env.DB.prepare('SELECT * FROM registrars').all();
+      return new Response(JSON.stringify({ ok: true, data: rows.results }), { headers });
+    }
+    // 添加注册商
+    if (pathname === '/api/registrars' && req.method === 'POST') {
+      const d = await req.json();
+      await env.DB.prepare('INSERT INTO registrars(name,contact,website,api_url,api_key,support_email,memo) VALUES (?,?,?,?,?,?,?)')
+        .bind(d.name, d.contact || '', d.website || '', d.api_url || '', d.api_key || '', d.support_email || '', d.memo || '').run();
+      return new Response(JSON.stringify({ ok: true }), { headers });
+    }
+    // 删除注册商
+    if (pathname.startsWith('/api/registrars/') && req.method === 'DELETE') {
+      const id = pathname.split('/').pop();
+      await env.DB.prepare('DELETE FROM registrars WHERE id=?').bind(id).run();
       return new Response(JSON.stringify({ ok: true }), { headers });
     }
 
@@ -108,6 +127,29 @@ export default {
       await env.DB.prepare('DELETE FROM ssl_certs WHERE id=?').bind(id).run();
       return new Response(JSON.stringify({ ok: true }), { headers });
     }
+    // SSL自动申请（ACME对接预留）
+    if (pathname === '/api/ssl/apply' && req.method === 'POST') {
+      const d = await req.json();
+      // 这里假设你有外部ACME服务API
+      const acmeApi = env.ACME_API_URL;
+      const acmeKey = env.ACME_API_KEY;
+      if (!acmeApi || !acmeKey) return new Response(JSON.stringify({ ok: false, msg: '未配置ACME服务' }), { headers, status: 500 });
+      // 获取域名
+      const domain = await env.DB.prepare('SELECT * FROM domains WHERE id=?').bind(d.domain_id).first();
+      if (!domain) return new Response(JSON.stringify({ ok: false, msg: '域名不存在' }), { headers, status: 404 });
+      // 调用外部ACME服务
+      const acmeRes = await fetch(acmeApi, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + acmeKey },
+        body: JSON.stringify({ domain: domain.domain })
+      });
+      if (!acmeRes.ok) return new Response(JSON.stringify({ ok: false, msg: 'ACME服务失败' }), { headers, status: 500 });
+      const certData = await acmeRes.json();
+      if (!certData.cert || !certData.key || !certData.expiry_date) return new Response(JSON.stringify({ ok: false, msg: 'ACME返回无效' }), { headers, status: 500 });
+      await env.DB.prepare('INSERT INTO ssl_certs(domain_id,cert,key,expiry_date,memo) VALUES (?,?,?,?,?)')
+        .bind(d.domain_id, certData.cert, certData.key, certData.expiry_date, '自动申请').run();
+      return new Response(JSON.stringify({ ok: true }), { headers });
+    }
 
     // Telegram到期提醒（定时任务调用）
     if (pathname === '/api/cron/remind' && req.method === 'POST') {
@@ -129,7 +171,7 @@ export default {
     }
 
     // 静态文件兜底（供前端index.html直接访问）
-    return fetch('https://your-cloudflare-pages-domain/index.html');
+    return fetch('https://domain-management-8ye.pages.dev/index.html');
   }
 }
 
