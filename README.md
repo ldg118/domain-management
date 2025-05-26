@@ -1,12 +1,12 @@
-# 域名管理系统（多用户、权限、SSL自动申请、注册商完善）
+# 域名管理系统（Cloudflare D1 + Workers + Pages）
 
-## 部署步骤
+## 步骤
 
 1. **数据库初始化**
    - 在 Cloudflare D1 控制台执行 schema.sql。
-   - 插入管理员账户：
+   - 插入管理员账号：
      ```sql
-     INSERT INTO users(username,password,role) VALUES ('admin','123456','admin');
+     INSERT INTO users(username, password, role) VALUES ('admin', '123456', 'admin');
      ```
 
 2. **前端部署**
@@ -22,8 +22,8 @@
    - 在 Worker 环境中设置：
      - TELEGRAM_BOT_TOKEN
      - TELEGRAM_CHAT_ID
-     - ACME_API_URL
-     - ACME_API_KEY
+     - ACME_API_URL（如需SSL自动申请）
+     - ACME_API_KEY（如需SSL自动申请）
 
 5. **定时任务**
    - 在 Cloudflare Worker 中配置 Scheduled Trigger，每天自动检查到期并发送 Telegram 提醒。

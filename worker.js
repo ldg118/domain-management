@@ -171,7 +171,7 @@ export default {
     }
 
     // 静态文件兜底（供前端index.html直接访问）
-    return fetch('https://your-cloudflare-pages-domain/index.html');
+    return fetch('https://domain-management-8ye.pages.dev/index.html');
   }
 }
 
